@@ -297,5 +297,3 @@ Open `http://localhost:8501` in your browser. Click “Start Detection” to sta
 
 ### License
 This repository is provided for educational and research purposes. Please review and adapt licensing for your use case.
-
-# emotion-detection
