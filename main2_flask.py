@@ -10,7 +10,7 @@ import json
 import base64
 
 # Configuration
-MODEL_PATH = "/Users/harshsinha/VS Code/Emotion Detection/models/emotion_densenet.keras"
+MODEL_PATH = "models/emotion_densenet.keras"  # Updated path
 IMG_HEIGHT = 48
 IMG_WIDTH = 48
 CLASS_LABELS = ['Anger', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sadness', 'Surprise']
@@ -18,10 +18,19 @@ EMOTION_COLORS = {
     'Anger': '#ef4444',
     'Disgust': '#10b981',
     'Fear': '#8b5cf6',
-    'Happy': '#f59e0b',
+    'Happy': '#fbbf24',
     'Neutral': '#6b7280',
     'Sadness': '#3b82f6',
     'Surprise': '#ec4899'
+}
+EMOTION_EMOJIS = {
+    'Anger': '😠',
+    'Disgust': '🤢',
+    'Fear': '😨',
+    'Happy': '😊',
+    'Neutral': '😐',
+    'Sadness': '😢',
+    'Surprise': '😲'
 }
 
 app = Flask(__name__)
@@ -246,92 +255,271 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emotion Detection System</title>
+    <title>AI Emotion Detection System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        * {
+            font-family: 'Inter', sans-serif;
+        }
+
         .gradient-bg {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            background-size: 200% 200%;
+            animation: gradientShift 15s ease infinite;
         }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
         .card {
-            backdrop-filter: blur(10px);
-            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(16px) saturate(180%);
+            background: rgba(255, 255, 255, 0.97);
+            border: 1px solid rgba(255, 255, 255, 0.3);
         }
+
+        .glass-card {
+            backdrop-filter: blur(12px) saturate(180%);
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+
         .pulse-dot {
             animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
+
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.7;
+                transform: scale(1.1);
+            }
         }
+
+        .glow {
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+            animation: glow 3s ease-in-out infinite;
+        }
+
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(102, 126, 234, 0.5); }
+            50% { box-shadow: 0 0 30px rgba(102, 126, 234, 0.8); }
+        }
+
         #videoFeed {
             max-width: 100%;
             height: auto;
-            border-radius: 12px;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transition: all 0.3s ease;
         }
+
+        #videoFeed:hover {
+            transform: scale(1.01);
+            box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.3);
+        }
+
         .stat-card {
-            transition: transform 0.2s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
         }
+
         .stat-card:hover {
-            transform: translateY(-4px);
+            transform: translateY(-6px) scale(1.02);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-primary {
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .btn-primary:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.6s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .emotion-badge {
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .emotion-badge:hover {
+            transform: scale(1.05);
+        }
+
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+
+        .progress-ring-circle {
+            transition: stroke-dashoffset 0.35s;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(102, 126, 234, 0.5);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(102, 126, 234, 0.7);
+        }
+
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 200px;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 8px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
         }
     </style>
 </head>
 <body class="gradient-bg min-h-screen">
-    <div class="container mx-auto px-4 py-8">
+    <div class="container mx-auto px-4 py-8 fade-in">
         <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-5xl font-bold text-white mb-2">🎭 Emotion Detection System</h1>
-            <p class="text-purple-200 text-lg">Real-time AI-powered facial emotion recognition</p>
+        <div class="text-center mb-10">
+            <div class="inline-block mb-4">
+                <h1 class="text-6xl font-extrabold text-white mb-3 tracking-tight">
+                    <span class="inline-block animate-pulse">🎭</span>
+                    AI Emotion Detection
+                </h1>
+                <div class="h-1 bg-gradient-to-r from-transparent via-white to-transparent opacity-50 rounded-full"></div>
+            </div>
+            <p class="text-purple-100 text-xl font-light tracking-wide">Real-time facial emotion recognition powered by Deep Learning</p>
+            <p class="text-purple-200 text-sm font-medium mt-2 opacity-80">DenseNet169 • TensorFlow • OpenCV</p>
         </div>
 
         <!-- Main Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Video Feed (Left Column) -->
-            <div class="lg:col-span-2">
-                <div class="card rounded-2xl shadow-2xl p-6">
-                    <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-2xl font-bold text-gray-800">Live Feed</h2>
-                        <div class="flex items-center gap-2">
-                            <span id="statusDot" class="w-3 h-3 rounded-full bg-gray-400"></span>
-                            <span id="statusText" class="text-sm font-medium text-gray-600">Inactive</span>
+            <div class="lg:col-span-2 space-y-6">
+                <div class="card rounded-3xl shadow-2xl p-7">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-800 mb-1">Live Camera Feed</h2>
+                            <p class="text-gray-500 text-sm">Real-time emotion detection & analysis</p>
+                        </div>
+                        <div class="flex items-center gap-3 px-4 py-2 rounded-full glass-card">
+                            <span id="statusDot" class="w-3 h-3 rounded-full bg-gray-400 shadow-lg"></span>
+                            <span id="statusText" class="text-sm font-semibold text-gray-700">Inactive</span>
                         </div>
                     </div>
-                    
-                    <div class="relative bg-gray-900 rounded-xl overflow-hidden" style="min-height: 480px;">
+
+                    <div class="relative bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl overflow-hidden shadow-inner" style="min-height: 480px;">
                         <img id="videoFeed" src="/placeholder" alt="Video Feed" class="w-full">
-                        <div id="noVideoPlaceholder" class="absolute inset-0 flex items-center justify-center bg-gray-800">
+                        <div id="noVideoPlaceholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
                             <div class="text-center text-gray-400">
-                                <svg class="w-24 h-24 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-                                </svg>
-                                <p class="text-xl">Camera Inactive</p>
-                                <p class="text-sm mt-2">Click "Start Detection" to begin</p>
+                                <div class="inline-block p-6 bg-gray-800 rounded-full mb-6 shadow-2xl">
+                                    <svg class="w-24 h-24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                    </svg>
+                                </div>
+                                <p class="text-2xl font-semibold mb-2">Camera Inactive</p>
+                                <p class="text-sm opacity-75">Click "Start Detection" below to begin</p>
                             </div>
                         </div>
                     </div>
 
                     <!-- Controls -->
-                    <div class="flex gap-3 mt-6">
-                        <button id="startBtn" onclick="startDetection()" 
-                            class="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg">
-                            ▶ Start Detection
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-7">
+                        <button id="startBtn" onclick="startDetection()"
+                            class="btn-primary bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold py-4 px-8 rounded-xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                            </svg>
+                            <span>Start Detection</span>
                         </button>
                         <button id="stopBtn" onclick="stopDetection()" disabled
-                            class="flex-1 bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
-                            ⏸ Stop Detection
+                            class="btn-primary bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-bold py-4 px-8 rounded-xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                            </svg>
+                            <span>Stop Detection</span>
                         </button>
                         <button onclick="resetStats()"
-                            class="bg-purple-500 hover:bg-purple-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg">
-                            🔄 Reset Stats
+                            class="btn-primary bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-bold py-4 px-8 rounded-xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                            </svg>
+                            <span>Reset Stats</span>
                         </button>
                     </div>
                 </div>
 
                 <!-- Emotion Distribution Chart -->
-                <div class="card rounded-2xl shadow-2xl p-6 mt-6">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Emotion Distribution</h2>
+                <div class="card rounded-3xl shadow-2xl p-7">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-1">Emotion Distribution</h2>
+                        <p class="text-gray-500 text-sm">Visual breakdown of detected emotions</p>
+                    </div>
                     <canvas id="emotionChart" height="80"></canvas>
                 </div>
             </div>
@@ -339,48 +527,84 @@ HTML_TEMPLATE = """
             <!-- Stats Panel (Right Column) -->
             <div class="space-y-6">
                 <!-- Real-time Stats -->
-                <div class="card rounded-2xl shadow-2xl p-6">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Statistics</h2>
-                    
+                <div class="card rounded-3xl shadow-2xl p-7">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-1">Live Statistics</h2>
+                        <p class="text-gray-500 text-sm">Real-time performance metrics</p>
+                    </div>
+
                     <div class="space-y-4">
-                        <div class="stat-card bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl p-4 text-white">
-                            <div class="text-sm opacity-90">Total Detections</div>
-                            <div id="totalDetections" class="text-3xl font-bold">0</div>
+                        <div class="stat-card bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-600 rounded-2xl p-5 text-white shadow-lg">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="text-sm font-medium opacity-90">Total Detections</div>
+                                <svg class="w-5 h-5 opacity-75" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/>
+                                </svg>
+                            </div>
+                            <div id="totalDetections" class="text-4xl font-extrabold tracking-tight">0</div>
+                            <div class="text-xs mt-2 opacity-75">detections processed</div>
                         </div>
-                        
-                        <div class="stat-card bg-gradient-to-r from-green-500 to-green-600 rounded-xl p-4 text-white">
-                            <div class="text-sm opacity-90">Current FPS</div>
-                            <div id="currentFPS" class="text-3xl font-bold">0</div>
+
+                        <div class="stat-card bg-gradient-to-br from-emerald-500 via-green-600 to-teal-600 rounded-2xl p-5 text-white shadow-lg">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="text-sm font-medium opacity-90">Processing Speed</div>
+                                <svg class="w-5 h-5 opacity-75" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            <div id="currentFPS" class="text-4xl font-extrabold tracking-tight">0</div>
+                            <div class="text-xs mt-2 opacity-75">frames per second</div>
                         </div>
-                        
-                        <div class="stat-card bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl p-4 text-white">
-                            <div class="text-sm opacity-90">Most Common</div>
-                            <div id="mostCommon" class="text-3xl font-bold">-</div>
+
+                        <div class="stat-card bg-gradient-to-br from-purple-500 via-violet-600 to-fuchsia-600 rounded-2xl p-5 text-white shadow-lg">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="text-sm font-medium opacity-90">Dominant Emotion</div>
+                                <svg class="w-5 h-5 opacity-75" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+                                </svg>
+                            </div>
+                            <div id="mostCommon" class="text-4xl font-extrabold tracking-tight">-</div>
+                            <div class="text-xs mt-2 opacity-75">most detected emotion</div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Emotion Breakdown -->
-                <div class="card rounded-2xl shadow-2xl p-6">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Emotion Counts</h2>
+                <div class="card rounded-3xl shadow-2xl p-7">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-1">Emotion Breakdown</h2>
+                        <p class="text-gray-500 text-sm">Detailed count by emotion type</p>
+                    </div>
                     <div id="emotionBreakdown" class="space-y-3">
                         <!-- Will be populated by JS -->
                     </div>
                 </div>
 
                 <!-- Recent Detections -->
-                <div class="card rounded-2xl shadow-2xl p-6">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Recent Detections</h2>
-                    <div id="recentDetections" class="space-y-2 max-h-64 overflow-y-auto">
-                        <p class="text-gray-500 text-sm">No detections yet</p>
+                <div class="card rounded-3xl shadow-2xl p-7">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-1">Recent Detections</h2>
+                        <p class="text-gray-500 text-sm">Latest emotion readings</p>
+                    </div>
+                    <div id="recentDetections" class="space-y-2 max-h-80 overflow-y-auto pr-2">
+                        <div class="text-center py-8">
+                            <svg class="w-16 h-16 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                            </svg>
+                            <p class="text-gray-400 text-sm font-medium">No detections yet</p>
+                            <p class="text-gray-400 text-xs mt-1">Start detection to see results</p>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Footer -->
-        <div class="text-center mt-8 text-white">
-            <p class="text-sm opacity-75">Powered by TensorFlow & DenseNet169 | Flask Backend</p>
+        <div class="text-center mt-12 pb-6">
+            <div class="inline-block glass-card rounded-full px-8 py-4 shadow-lg">
+                <p class="text-white font-semibold text-sm mb-1">🚀 Powered by Advanced AI</p>
+                <p class="text-purple-200 text-xs opacity-90">TensorFlow • DenseNet169 • OpenCV • Flask</p>
+            </div>
         </div>
     </div>
 
@@ -397,7 +621,7 @@ HTML_TEMPLATE = """
             'Surprise': '#ec4899'
         };
 
-        // Initialize chart
+        // Initialize chart with improved styling
         function initChart() {
             const ctx = document.getElementById('emotionChart').getContext('2d');
             chart = new Chart(ctx, {
@@ -408,29 +632,54 @@ HTML_TEMPLATE = """
                         label: 'Detection Count',
                         data: [0, 0, 0, 0, 0, 0, 0],
                         backgroundColor: Object.values(emotionColors),
-                        borderRadius: 8,
-                        borderWidth: 0
+                        borderRadius: 10,
+                        borderWidth: 0,
+                        hoverBackgroundColor: Object.values(emotionColors).map(c => c + 'dd'),
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: true,
+                    animation: {
+                        duration: 750,
+                        easing: 'easeInOutQuart'
+                    },
                     plugins: {
                         legend: { display: false },
                         tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                            padding: 12,
-                            titleFont: { size: 14 },
-                            bodyFont: { size: 13 }
+                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                            padding: 16,
+                            titleFont: { size: 15, weight: 'bold', family: 'Inter' },
+                            bodyFont: { size: 14, family: 'Inter' },
+                            borderColor: 'rgba(255, 255, 255, 0.2)',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            displayColors: true,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y + ' detections';
+                                }
+                            }
                         }
                     },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            ticks: { precision: 0 },
-                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                            ticks: {
+                                precision: 0,
+                                font: { family: 'Inter', size: 12 },
+                                color: '#6b7280'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.06)',
+                                drawBorder: false
+                            }
                         },
                         x: {
+                            ticks: {
+                                font: { family: 'Inter', size: 12, weight: '500' },
+                                color: '#374151'
+                            },
                             grid: { display: false }
                         }
                     }
@@ -447,16 +696,19 @@ HTML_TEMPLATE = """
                     isActive = true;
                     document.getElementById('videoFeed').src = '/video_feed?' + new Date().getTime();
                     document.getElementById('noVideoPlaceholder').style.display = 'none';
-                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot';
+                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot shadow-lg shadow-green-500/50';
                     document.getElementById('statusText').textContent = 'Active';
-                    document.getElementById('statusText').className = 'text-sm font-medium text-green-600';
+                    document.getElementById('statusText').className = 'text-sm font-bold text-green-600';
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = false;
                     updateStats();
+
+                    // Show success notification
+                    showNotification('Detection started successfully!', 'success');
                 }
             } catch (error) {
                 console.error('Error starting detection:', error);
-                alert('Failed to start detection. Please check console.');
+                showNotification('Failed to start detection. Please check console.', 'error');
             }
         }
 
@@ -469,14 +721,18 @@ HTML_TEMPLATE = """
                     isActive = false;
                     document.getElementById('videoFeed').src = '/placeholder';
                     document.getElementById('noVideoPlaceholder').style.display = 'flex';
-                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400';
+                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
                     document.getElementById('statusText').textContent = 'Inactive';
-                    document.getElementById('statusText').className = 'text-sm font-medium text-gray-600';
+                    document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
                     document.getElementById('startBtn').disabled = false;
                     document.getElementById('stopBtn').disabled = true;
+
+                    // Show success notification
+                    showNotification('Detection stopped', 'info');
                 }
             } catch (error) {
                 console.error('Error stopping detection:', error);
+                showNotification('Failed to stop detection', 'error');
             }
         }
 
@@ -487,11 +743,35 @@ HTML_TEMPLATE = """
                     const data = await response.json();
                     if (data.status === 'reset') {
                         updateStats();
+                        showNotification('Statistics reset successfully', 'success');
                     }
                 } catch (error) {
                     console.error('Error resetting stats:', error);
+                    showNotification('Failed to reset statistics', 'error');
                 }
             }
+        }
+
+        // Notification system
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            const colors = {
+                success: 'from-green-500 to-emerald-600',
+                error: 'from-red-500 to-rose-600',
+                info: 'from-blue-500 to-indigo-600'
+            };
+            notification.className = `fixed top-6 right-6 bg-gradient-to-r ${colors[type]} text-white px-6 py-4 rounded-xl shadow-2xl z-50 transform translate-x-0 transition-all duration-300 flex items-center gap-3`;
+            notification.innerHTML = `
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <span class="font-semibold">${message}</span>
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => {
+                notification.style.transform = 'translateX(400px)';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
         }
 
         async function updateStats() {
@@ -526,40 +806,53 @@ HTML_TEMPLATE = """
                 ];
                 chart.update('none');
                 
-                // Update emotion breakdown
+                // Update emotion breakdown with enhanced visuals
                 const breakdownHTML = Object.entries(data.emotion_counts)
                     .sort((a, b) => b[1] - a[1])
                     .map(([emotion, count]) => {
-                        const percentage = data.total_detections > 0 
-                            ? ((count / data.total_detections) * 100).toFixed(1) 
+                        const percentage = data.total_detections > 0
+                            ? ((count / data.total_detections) * 100).toFixed(1)
                             : 0;
+                        const barWidth = percentage;
                         return `
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <div class="w-3 h-3 rounded-full" style="background-color: ${emotionColors[emotion]}"></div>
-                                    <span class="font-medium text-gray-700">${emotion}</span>
+                            <div class="emotion-badge glass-card rounded-xl p-4 hover:shadow-lg transition-all">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-4 h-4 rounded-full shadow-lg" style="background-color: ${emotionColors[emotion]}"></div>
+                                        <span class="font-bold text-gray-800 text-lg">${emotion}</span>
+                                    </div>
+                                    <div class="text-right">
+                                        <span class="font-extrabold text-gray-900 text-xl">${count}</span>
+                                        <span class="text-sm text-gray-500 ml-2 font-medium">${percentage}%</span>
+                                    </div>
                                 </div>
-                                <div class="text-right">
-                                    <span class="font-bold text-gray-800">${count}</span>
-                                    <span class="text-sm text-gray-500 ml-1">(${percentage}%)</span>
+                                <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                    <div class="h-2 rounded-full transition-all duration-500" style="width: ${barWidth}%; background-color: ${emotionColors[emotion]}"></div>
                                 </div>
                             </div>
                         `;
                     }).join('');
                 document.getElementById('emotionBreakdown').innerHTML = breakdownHTML;
                 
-                // Update recent detections
+                // Update recent detections with enhanced styling
                 if (data.recent_detections.length > 0) {
                     const recentHTML = data.recent_detections
                         .slice(-10)
                         .reverse()
-                        .map(detection => {
+                        .map((detection, index) => {
                             const time = new Date(detection.timestamp).toLocaleTimeString();
                             return `
-                                <div class="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg">
-                                    <span class="font-medium" style="color: ${emotionColors[detection.emotion]}">${detection.emotion}</span>
-                                    <span class="text-sm text-gray-600">${detection.confidence.toFixed(1)}%</span>
-                                    <span class="text-xs text-gray-400">${time}</span>
+                                <div class="glass-card rounded-xl py-3 px-4 hover:shadow-md transition-all transform hover:scale-102 fade-in" style="animation-delay: ${index * 0.05}s">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-3 flex-1">
+                                            <div class="w-3 h-3 rounded-full shadow-lg" style="background-color: ${emotionColors[detection.emotion]}"></div>
+                                            <span class="font-bold text-gray-800">${detection.emotion}</span>
+                                        </div>
+                                        <div class="flex items-center gap-4">
+                                            <span class="px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ${emotionColors[detection.emotion]}">${detection.confidence.toFixed(1)}%</span>
+                                            <span class="text-xs text-gray-500 font-medium">${time}</span>
+                                        </div>
+                                    </div>
                                 </div>
                             `;
                         }).join('');
