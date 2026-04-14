@@ -2,12 +2,11 @@ import os
 import cv2
 import numpy as np
 import tensorflow as tf
-from flask import Flask, Response, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request
 from collections import deque
 from datetime import datetime
-import time
-import json
 import base64
+import time
 
 # Configuration
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.keras")
@@ -24,13 +23,13 @@ EMOTION_COLORS = {
     'Surprise': '#ec4899'
 }
 EMOTION_EMOJIS = {
-    'Anger': '😠',
-    'Disgust': '🤢',
-    'Fear': '😨',
-    'Happy': '😊',
-    'Neutral': '😐',
-    'Sadness': '😢',
-    'Surprise': '😲'
+    'Anger': '\U0001f620',
+    'Disgust': '\U0001f922',
+    'Fear': '\U0001f628',
+    'Happy': '\U0001f60a',
+    'Neutral': '\U0001f610',
+    'Sadness': '\U0001f622',
+    'Surprise': '\U0001f632'
 }
 
 app = Flask(__name__)
@@ -40,14 +39,12 @@ class AppState:
     def __init__(self):
         self.model = None
         self.face_cascade = None
-        self.camera = None
-        self.camera_active = False
         self.emotion_history = deque(maxlen=100)
         self.fps_history = deque(maxlen=30)
         self.last_frame_time = time.time()
         self.detection_count = 0
         self.stats = {emotion: 0 for emotion in CLASS_LABELS}
-        
+
 state = AppState()
 
 
@@ -55,10 +52,10 @@ def load_model(path: str):
     """Load the emotion detection model"""
     try:
         model = tf.keras.models.load_model(path)
-        print(f"✓ Model loaded successfully from {path}")
+        print(f"\u2713 Model loaded successfully from {path}")
         return model
     except Exception as e:
-        print(f"✗ Error loading model: {e}")
+        print(f"\u2717 Error loading model: {e}")
         return None
 
 
@@ -71,12 +68,12 @@ def preprocess_bgr_roi(bgr_roi: np.ndarray) -> np.ndarray:
 
 
 def initialize_resources():
-    """Initialize model, face cascade, and camera"""
+    """Initialize model and face cascade"""
     if state.model is None:
         state.model = load_model(MODEL_PATH)
         if state.model is None:
             return False
-    
+
     if state.face_cascade is None:
         try:
             from cv2 import data as cv2_data
@@ -84,169 +81,12 @@ def initialize_resources():
         except Exception:
             base_dir = os.path.dirname(cv2.__file__)
             haar_dir = os.path.join(base_dir, "data", "haarcascades")
-        
+
         cascade_path = os.path.join(haar_dir, "haarcascade_frontalface_default.xml")
         state.face_cascade = cv2.CascadeClassifier(cascade_path)
-        print(f"✓ Face cascade loaded")
-    
+        print(f"\u2713 Face cascade loaded")
+
     return True
-
-
-def start_camera():
-    """Start the camera"""
-    if state.camera is None or not state.camera.isOpened():
-        state.camera = cv2.VideoCapture(0)
-        state.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        state.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        state.camera.set(cv2.CAP_PROP_FPS, 30)
-        time.sleep(0.5)  # Allow camera to warm up
-        
-    state.camera_active = True
-    print("✓ Camera started")
-
-
-def stop_camera():
-    """Stop the camera"""
-    state.camera_active = False
-    if state.camera is not None:
-        state.camera.release()
-        state.camera = None
-    print("✓ Camera stopped")
-
-
-def calculate_fps():
-    """Calculate current FPS"""
-    current_time = time.time()
-    fps = 1 / (current_time - state.last_frame_time) if state.last_frame_time else 0
-    state.last_frame_time = current_time
-    state.fps_history.append(fps)
-    return sum(state.fps_history) / len(state.fps_history)
-
-
-def generate_frames():
-    """Generate video frames with emotion detection"""
-    while state.camera_active:
-        if state.camera is None or not state.camera.isOpened():
-            break
-            
-        success, frame = state.camera.read()
-        if not success:
-            break
-
-        # Calculate FPS
-        fps = calculate_fps()
-
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = state.face_cascade.detectMultiScale(
-            gray, 
-            scaleFactor=1.3, 
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-
-        detected_emotions = []
-        
-        # Process each detected face
-        for i, (x, y, w, h) in enumerate(faces):
-            # Draw face rectangle
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            
-            # Extract and process ROI
-            roi = frame[y:y + h, x:x + w]
-            x_input = preprocess_bgr_roi(roi)
-            
-            # Predict emotion
-            probs = state.model.predict(x_input, verbose=0)[0]
-            idx = int(np.argmax(probs))
-            emotion = CLASS_LABELS[idx]
-            confidence = probs[idx] * 100
-            
-            # Update statistics
-            state.stats[emotion] += 1
-            state.detection_count += 1
-            detected_emotions.append({
-                'emotion': emotion,
-                'confidence': confidence,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Draw emotion label with background
-            label = f"{emotion} ({confidence:.1f}%)"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.7
-            thickness = 2
-            
-            # Get text size
-            (text_width, text_height), baseline = cv2.getTextSize(
-                label, font, font_scale, thickness
-            )
-            
-            # Draw background rectangle for text
-            cv2.rectangle(
-                frame,
-                (x, y - text_height - 15),
-                (x + text_width + 10, y),
-                (0, 255, 0),
-                -1
-            )
-            
-            # Draw text
-            cv2.putText(
-                frame, 
-                label, 
-                (x + 5, y - 8), 
-                font, 
-                font_scale, 
-                (0, 0, 0), 
-                thickness
-            )
-            
-            # Draw face number
-            cv2.putText(
-                frame,
-                f"Face #{i+1}",
-                (x + 5, y + h - 10),
-                font,
-                0.5,
-                (0, 255, 0),
-                1
-            )
-
-        # Add detected emotions to history
-        if detected_emotions:
-            state.emotion_history.extend(detected_emotions)
-
-        # Draw FPS counter
-        cv2.putText(
-            frame,
-            f"FPS: {fps:.1f}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2
-        )
-        
-        # Draw face count
-        cv2.putText(
-            frame,
-            f"Faces: {len(faces)}",
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2
-        )
-
-        # Encode frame
-        ret, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if not ret:
-            continue
-            
-        frame_bytes = buffer.tobytes()
-        yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
 
 
 HTML_TEMPLATE = """
@@ -315,17 +155,38 @@ HTML_TEMPLATE = """
             50% { box-shadow: 0 0 30px rgba(102, 126, 234, 0.8); }
         }
 
+        .video-container {
+            position: relative;
+            width: 100%;
+        }
+
         #videoFeed {
             max-width: 100%;
+            width: 100%;
             height: auto;
             border-radius: 16px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
             transition: all 0.3s ease;
+            display: block;
         }
 
-        #videoFeed:hover {
+        #overlayCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 16px;
+            pointer-events: none;
+        }
+
+        .video-container:hover #videoFeed {
             transform: scale(1.01);
             box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.3);
+        }
+
+        .video-container:hover #overlayCanvas {
+            transform: scale(1.01);
         }
 
         .stat-card {
@@ -448,13 +309,13 @@ HTML_TEMPLATE = """
         <div class="text-center mb-10">
             <div class="inline-block mb-4">
                 <h1 class="text-6xl font-extrabold text-white mb-3 tracking-tight">
-                    <span class="inline-block animate-pulse">🎭</span>
+                    <span class="inline-block animate-pulse">&#127917;</span>
                     AI Emotion Detection
                 </h1>
                 <div class="h-1 bg-gradient-to-r from-transparent via-white to-transparent opacity-50 rounded-full"></div>
             </div>
             <p class="text-purple-100 text-xl font-light tracking-wide">Real-time facial emotion recognition powered by Deep Learning</p>
-            <p class="text-purple-200 text-sm font-medium mt-2 opacity-80">DenseNet169 • TensorFlow • OpenCV</p>
+            <p class="text-purple-200 text-sm font-medium mt-2 opacity-80">DenseNet169 &bull; TensorFlow &bull; OpenCV</p>
         </div>
 
         <!-- Main Grid -->
@@ -474,7 +335,10 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div class="relative bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl overflow-hidden shadow-inner" style="min-height: 480px;">
-                        <img id="videoFeed" src="/placeholder" alt="Video Feed" class="w-full">
+                        <div class="video-container">
+                            <video id="videoFeed" autoplay playsinline muted class="w-full"></video>
+                            <canvas id="overlayCanvas"></canvas>
+                        </div>
                         <div id="noVideoPlaceholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
                             <div class="text-center text-gray-400">
                                 <div class="inline-block p-6 bg-gray-800 rounded-full mb-6 shadow-2xl">
@@ -602,8 +466,8 @@ HTML_TEMPLATE = """
         <!-- Footer -->
         <div class="text-center mt-12 pb-6">
             <div class="inline-block glass-card rounded-full px-8 py-4 shadow-lg">
-                <p class="text-white font-semibold text-sm mb-1">🚀 Powered by Advanced AI</p>
-                <p class="text-purple-200 text-xs opacity-90">TensorFlow • DenseNet169 • OpenCV • Flask</p>
+                <p class="text-white font-semibold text-sm mb-1">&#128640; Powered by Advanced AI</p>
+                <p class="text-purple-200 text-xs opacity-90">TensorFlow &bull; DenseNet169 &bull; OpenCV &bull; Flask</p>
             </div>
         </div>
     </div>
@@ -611,6 +475,11 @@ HTML_TEMPLATE = """
     <script>
         let isActive = false;
         let chart = null;
+        let mediaStream = null;
+        let predictionInterval = null;
+        let captureCanvas = null;
+        let captureCtx = null;
+
         const emotionColors = {
             'Anger': '#ef4444',
             'Disgust': '#10b981',
@@ -687,53 +556,146 @@ HTML_TEMPLATE = """
             });
         }
 
+        function drawOverlay(faces) {
+            const video = document.getElementById('videoFeed');
+            const canvas = document.getElementById('overlayCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Match canvas internal resolution to video's natural resolution
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            faces.forEach(function(face) {
+                const x = face.x;
+                const y = face.y;
+                const w = face.w;
+                const h = face.h;
+                const emotion = face.emotion;
+                const confidence = face.confidence;
+
+                // Draw bounding box
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+
+                // Draw label background
+                const label = emotion + ' (' + confidence.toFixed(1) + '%)';
+                ctx.font = 'bold 16px Inter, sans-serif';
+                const textWidth = ctx.measureText(label).width;
+                const textHeight = 20;
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(x, y - textHeight - 8, textWidth + 12, textHeight + 8);
+
+                // Draw label text
+                ctx.fillStyle = '#000000';
+                ctx.fillText(label, x + 6, y - 8);
+            });
+        }
+
         async function startDetection() {
             try {
-                const response = await fetch('/start', { method: 'POST' });
-                const data = await response.json();
-                
-                if (data.status === 'started') {
-                    isActive = true;
-                    document.getElementById('videoFeed').src = '/video_feed?' + new Date().getTime();
-                    document.getElementById('noVideoPlaceholder').style.display = 'none';
-                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot shadow-lg shadow-green-500/50';
-                    document.getElementById('statusText').textContent = 'Active';
-                    document.getElementById('statusText').className = 'text-sm font-bold text-green-600';
-                    document.getElementById('startBtn').disabled = true;
-                    document.getElementById('stopBtn').disabled = false;
-                    updateStats();
+                // Request camera access from the browser
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+                });
 
-                    // Show success notification
-                    showNotification('Detection started successfully!', 'success');
-                }
+                const video = document.getElementById('videoFeed');
+                video.srcObject = mediaStream;
+                await video.play();
+
+                // Create an offscreen canvas for capturing frames
+                captureCanvas = document.createElement('canvas');
+                captureCtx = captureCanvas.getContext('2d');
+
+                isActive = true;
+                document.getElementById('noVideoPlaceholder').style.display = 'none';
+                document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot shadow-lg shadow-green-500/50';
+                document.getElementById('statusText').textContent = 'Active';
+                document.getElementById('statusText').className = 'text-sm font-bold text-green-600';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+                // Start sending frames to the server at ~4 fps
+                let sending = false;
+                predictionInterval = setInterval(async function() {
+                    if (sending || !isActive) return;
+                    sending = true;
+                    try {
+                        await captureAndPredict();
+                    } catch (e) {
+                        console.error('Prediction error:', e);
+                    }
+                    sending = false;
+                }, 250);
+
+                showNotification('Detection started successfully!', 'success');
             } catch (error) {
                 console.error('Error starting detection:', error);
-                showNotification('Failed to start detection. Please check console.', 'error');
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    showNotification('Camera access denied. Please allow camera permissions and try again.', 'error');
+                } else if (error.name === 'NotFoundError') {
+                    showNotification('No camera found. Please connect a camera and try again.', 'error');
+                } else {
+                    showNotification('Failed to start detection: ' + error.message, 'error');
+                }
             }
         }
 
-        async function stopDetection() {
-            try {
-                const response = await fetch('/stop', { method: 'POST' });
-                const data = await response.json();
-                
-                if (data.status === 'stopped') {
-                    isActive = false;
-                    document.getElementById('videoFeed').src = '/placeholder';
-                    document.getElementById('noVideoPlaceholder').style.display = 'flex';
-                    document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
-                    document.getElementById('statusText').textContent = 'Inactive';
-                    document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
-                    document.getElementById('startBtn').disabled = false;
-                    document.getElementById('stopBtn').disabled = true;
+        async function captureAndPredict() {
+            const video = document.getElementById('videoFeed');
+            if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
-                    // Show success notification
-                    showNotification('Detection stopped', 'info');
-                }
-            } catch (error) {
-                console.error('Error stopping detection:', error);
-                showNotification('Failed to stop detection', 'error');
+            captureCanvas.width = video.videoWidth;
+            captureCanvas.height = video.videoHeight;
+            captureCtx.drawImage(video, 0, 0);
+
+            const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.8);
+
+            const response = await fetch('/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: dataUrl })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                drawOverlay(data.faces || []);
             }
+        }
+
+        function stopDetection() {
+            isActive = false;
+
+            // Stop the prediction loop
+            if (predictionInterval) {
+                clearInterval(predictionInterval);
+                predictionInterval = null;
+            }
+
+            // Stop the camera stream
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(function(track) { track.stop(); });
+                mediaStream = null;
+            }
+
+            const video = document.getElementById('videoFeed');
+            video.srcObject = null;
+
+            // Clear overlay
+            const canvas = document.getElementById('overlayCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            document.getElementById('noVideoPlaceholder').style.display = 'flex';
+            document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
+            document.getElementById('statusText').textContent = 'Inactive';
+            document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+
+            showNotification('Detection stopped', 'info');
         }
 
         async function resetStats() {
@@ -753,47 +715,46 @@ HTML_TEMPLATE = """
         }
 
         // Notification system
-        function showNotification(message, type = 'info') {
+        function showNotification(message, type) {
+            type = type || 'info';
             const notification = document.createElement('div');
             const colors = {
                 success: 'from-green-500 to-emerald-600',
                 error: 'from-red-500 to-rose-600',
                 info: 'from-blue-500 to-indigo-600'
             };
-            notification.className = `fixed top-6 right-6 bg-gradient-to-r ${colors[type]} text-white px-6 py-4 rounded-xl shadow-2xl z-50 transform translate-x-0 transition-all duration-300 flex items-center gap-3`;
-            notification.innerHTML = `
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                </svg>
-                <span class="font-semibold">${message}</span>
-            `;
+            notification.className = 'fixed top-6 right-6 bg-gradient-to-r ' + colors[type] + ' text-white px-6 py-4 rounded-xl shadow-2xl z-50 transform translate-x-0 transition-all duration-300 flex items-center gap-3';
+            notification.innerHTML = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg><span class="font-semibold">' + message + '</span>';
             document.body.appendChild(notification);
-            setTimeout(() => {
+            setTimeout(function() {
                 notification.style.transform = 'translateX(400px)';
-                setTimeout(() => notification.remove(), 300);
+                setTimeout(function() { notification.remove(); }, 300);
             }, 3000);
         }
 
         async function updateStats() {
-            if (!isActive && chart.data.datasets[0].data.every(v => v === 0)) {
+            if (!isActive && chart.data.datasets[0].data.every(function(v) { return v === 0; })) {
                 return;
             }
 
             try {
                 const response = await fetch('/stats');
                 const data = await response.json();
-                
+
                 // Update total detections
                 document.getElementById('totalDetections').textContent = data.total_detections.toLocaleString();
-                
+
                 // Update FPS
                 document.getElementById('currentFPS').textContent = data.fps.toFixed(1);
-                
+
                 // Update most common emotion
-                const maxEmotion = Object.entries(data.emotion_counts)
-                    .reduce((max, [emotion, count]) => count > max[1] ? [emotion, count] : max, ['None', 0]);
+                const entries = Object.entries(data.emotion_counts);
+                var maxEmotion = ['None', 0];
+                entries.forEach(function(entry) {
+                    if (entry[1] > maxEmotion[1]) maxEmotion = entry;
+                });
                 document.getElementById('mostCommon').textContent = maxEmotion[1] > 0 ? maxEmotion[0] : '-';
-                
+
                 // Update chart
                 chart.data.datasets[0].data = [
                     data.emotion_counts['Anger'],
@@ -805,57 +766,54 @@ HTML_TEMPLATE = """
                     data.emotion_counts['Surprise']
                 ];
                 chart.update('none');
-                
+
                 // Update emotion breakdown with enhanced visuals
-                const breakdownHTML = Object.entries(data.emotion_counts)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([emotion, count]) => {
-                        const percentage = data.total_detections > 0
-                            ? ((count / data.total_detections) * 100).toFixed(1)
-                            : 0;
-                        const barWidth = percentage;
-                        return `
-                            <div class="emotion-badge glass-card rounded-xl p-4 hover:shadow-lg transition-all">
-                                <div class="flex items-center justify-between mb-2">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-4 h-4 rounded-full shadow-lg" style="background-color: ${emotionColors[emotion]}"></div>
-                                        <span class="font-bold text-gray-800 text-lg">${emotion}</span>
-                                    </div>
-                                    <div class="text-right">
-                                        <span class="font-extrabold text-gray-900 text-xl">${count}</span>
-                                        <span class="text-sm text-gray-500 ml-2 font-medium">${percentage}%</span>
-                                    </div>
-                                </div>
-                                <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                                    <div class="h-2 rounded-full transition-all duration-500" style="width: ${barWidth}%; background-color: ${emotionColors[emotion]}"></div>
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
+                var breakdownHTML = '';
+                var sorted = Object.entries(data.emotion_counts).sort(function(a, b) { return b[1] - a[1]; });
+                sorted.forEach(function(item) {
+                    var emotion = item[0];
+                    var count = item[1];
+                    var percentage = data.total_detections > 0
+                        ? ((count / data.total_detections) * 100).toFixed(1)
+                        : 0;
+                    var barWidth = percentage;
+                    breakdownHTML += '<div class="emotion-badge glass-card rounded-xl p-4 hover:shadow-lg transition-all">' +
+                        '<div class="flex items-center justify-between mb-2">' +
+                            '<div class="flex items-center gap-3">' +
+                                '<div class="w-4 h-4 rounded-full shadow-lg" style="background-color: ' + emotionColors[emotion] + '"></div>' +
+                                '<span class="font-bold text-gray-800 text-lg">' + emotion + '</span>' +
+                            '</div>' +
+                            '<div class="text-right">' +
+                                '<span class="font-extrabold text-gray-900 text-xl">' + count + '</span>' +
+                                '<span class="text-sm text-gray-500 ml-2 font-medium">' + percentage + '%</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">' +
+                            '<div class="h-2 rounded-full transition-all duration-500" style="width: ' + barWidth + '%; background-color: ' + emotionColors[emotion] + '"></div>' +
+                        '</div>' +
+                    '</div>';
+                });
                 document.getElementById('emotionBreakdown').innerHTML = breakdownHTML;
-                
+
                 // Update recent detections with enhanced styling
                 if (data.recent_detections.length > 0) {
-                    const recentHTML = data.recent_detections
-                        .slice(-10)
-                        .reverse()
-                        .map((detection, index) => {
-                            const time = new Date(detection.timestamp).toLocaleTimeString();
-                            return `
-                                <div class="glass-card rounded-xl py-3 px-4 hover:shadow-md transition-all transform hover:scale-102 fade-in" style="animation-delay: ${index * 0.05}s">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-3 flex-1">
-                                            <div class="w-3 h-3 rounded-full shadow-lg" style="background-color: ${emotionColors[detection.emotion]}"></div>
-                                            <span class="font-bold text-gray-800">${detection.emotion}</span>
-                                        </div>
-                                        <div class="flex items-center gap-4">
-                                            <span class="px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ${emotionColors[detection.emotion]}">${detection.confidence.toFixed(1)}%</span>
-                                            <span class="text-xs text-gray-500 font-medium">${time}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
+                    var recentHTML = '';
+                    var recent = data.recent_detections.slice(-10).reverse();
+                    recent.forEach(function(detection, index) {
+                        var t = new Date(detection.timestamp).toLocaleTimeString();
+                        recentHTML += '<div class="glass-card rounded-xl py-3 px-4 hover:shadow-md transition-all transform hover:scale-102 fade-in" style="animation-delay: ' + (index * 0.05) + 's">' +
+                            '<div class="flex items-center justify-between">' +
+                                '<div class="flex items-center gap-3 flex-1">' +
+                                    '<div class="w-3 h-3 rounded-full shadow-lg" style="background-color: ' + emotionColors[detection.emotion] + '"></div>' +
+                                    '<span class="font-bold text-gray-800">' + detection.emotion + '</span>' +
+                                '</div>' +
+                                '<div class="flex items-center gap-4">' +
+                                    '<span class="px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ' + emotionColors[detection.emotion] + '">' + detection.confidence.toFixed(1) + '%</span>' +
+                                    '<span class="text-xs text-gray-500 font-medium">' + t + '</span>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>';
+                    });
                     document.getElementById('recentDetections').innerHTML = recentHTML;
                 }
             } catch (error) {
@@ -878,27 +836,81 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
-@app.route("/start", methods=["POST"])
-def start():
-    """Start emotion detection"""
+@app.route("/predict", methods=["POST"])
+def predict():
+    """Receive a base64 frame from the browser, run face detection + emotion prediction"""
     try:
         if not initialize_resources():
-            return jsonify({"status": "error", "message": "Failed to initialize resources"}), 500
-        
-        start_camera()
-        return jsonify({"status": "started"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+            return jsonify({"error": "Failed to initialize resources"}), 500
 
+        data = request.get_json()
+        if not data or "image" not in data:
+            return jsonify({"error": "No image provided"}), 400
 
-@app.route("/stop", methods=["POST"])
-def stop():
-    """Stop emotion detection"""
-    try:
-        stop_camera()
-        return jsonify({"status": "stopped"})
+        # Decode the base64 image
+        image_data = data["image"]
+        # Strip the data URL prefix if present
+        if "," in image_data:
+            image_data = image_data.split(",", 1)[1]
+
+        img_bytes = base64.b64decode(image_data)
+        np_arr = np.frombuffer(img_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            return jsonify({"error": "Failed to decode image"}), 400
+
+        # Calculate FPS
+        current_time = time.time()
+        fps = 1.0 / (current_time - state.last_frame_time) if state.last_frame_time else 0
+        state.last_frame_time = current_time
+        state.fps_history.append(fps)
+
+        # Convert to grayscale for face detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = state.face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.3,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+
+        results = []
+
+        for (x, y, w, h) in faces:
+            roi = frame[y:y + h, x:x + w]
+            x_input = preprocess_bgr_roi(roi)
+
+            probs = state.model.predict(x_input, verbose=0)[0]
+            idx = int(np.argmax(probs))
+            emotion = CLASS_LABELS[idx]
+            confidence = float(probs[idx] * 100)
+
+            # Update statistics
+            state.stats[emotion] += 1
+            state.detection_count += 1
+            state.emotion_history.append({
+                'emotion': emotion,
+                'confidence': confidence,
+                'timestamp': datetime.now().isoformat()
+            })
+
+            results.append({
+                "x": int(x),
+                "y": int(y),
+                "w": int(w),
+                "h": int(h),
+                "emotion": emotion,
+                "confidence": confidence
+            })
+
+        return jsonify({
+            "faces": results,
+            "face_count": len(results)
+        })
+
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/reset", methods=["POST"])
@@ -917,25 +929,13 @@ def reset():
 def stats():
     """Get current statistics"""
     recent_detections = list(state.emotion_history)[-10:] if state.emotion_history else []
-    
+
     return jsonify({
         "total_detections": state.detection_count,
         "emotion_counts": state.stats,
         "fps": sum(state.fps_history) / len(state.fps_history) if state.fps_history else 0,
         "recent_detections": recent_detections
     })
-
-
-@app.route("/video_feed")
-def video_feed():
-    """Video streaming route"""
-    if not state.camera_active:
-        return Response("Camera not active", status=503)
-    
-    return Response(
-        generate_frames(),
-        mimetype="multipart/x-mixed-replace; boundary=frame"
-    )
 
 
 @app.route("/placeholder")
@@ -956,22 +956,19 @@ def server_error(e):
 
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("🎭 EMOTION DETECTION SYSTEM")
+    print("\U0001f3ad EMOTION DETECTION SYSTEM")
     print("="*60)
     print(f"Model Path: {MODEL_PATH}")
     print(f"Server: http://localhost:8501")
     print("="*60 + "\n")
-    
+
     # Initialize resources on startup
     if not initialize_resources():
-        print("⚠️  Warning: Failed to initialize all resources")
+        print("\u26a0\ufe0f  Warning: Failed to initialize all resources")
         print("   Make sure the model path is correct")
-    
+
     try:
         port = int(os.environ.get("PORT", 8501))
         app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
     finally:
-        # Cleanup
-        if state.camera is not None:
-            state.camera.release()
-        print("\n✓ Server shutdown complete")
+        print("\n\u2713 Server shutdown complete")
