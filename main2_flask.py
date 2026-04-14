@@ -10,7 +10,7 @@ import json
 import base64
 
 # Configuration
-MODEL_PATH = "models/emotion_densenet.keras"  # Updated path
+MODEL_PATH = "/Users/harshsinha/VS Code/Emotion Detection/models/emotion_densenet.keras"
 IMG_HEIGHT = 48
 IMG_WIDTH = 48
 CLASS_LABELS = ['Anger', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sadness', 'Surprise']
