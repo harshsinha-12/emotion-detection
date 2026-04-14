@@ -474,6 +474,7 @@ HTML_TEMPLATE = """
 
     <script>
         let isActive = false;
+        let isStarting = false;
         let chart = null;
         let mediaStream = null;
         let predictionInterval = null;
@@ -488,6 +489,16 @@ HTML_TEMPLATE = """
             'Neutral': '#6b7280',
             'Sadness': '#3b82f6',
             'Surprise': '#ec4899'
+        };
+
+        const emotionEmojis = {
+            'Anger': '😠',
+            'Disgust': '🤢',
+            'Fear': '😨',
+            'Happy': '😊',
+            'Neutral': '😐',
+            'Sadness': '😢',
+            'Surprise': '😲'
         };
 
         // Initialize chart with improved styling
@@ -560,12 +571,18 @@ HTML_TEMPLATE = """
             const video = document.getElementById('videoFeed');
             const canvas = document.getElementById('overlayCanvas');
             const ctx = canvas.getContext('2d');
+            const nextWidth = video.videoWidth || canvas.width;
+            const nextHeight = video.videoHeight || canvas.height;
 
             // Match canvas internal resolution to video's natural resolution
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = nextWidth;
+            canvas.height = nextHeight;
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (!video.videoWidth || !video.videoHeight) {
+                return;
+            }
 
             faces.forEach(function(face) {
                 const x = face.x;
@@ -574,35 +591,102 @@ HTML_TEMPLATE = """
                 const h = face.h;
                 const emotion = face.emotion;
                 const confidence = face.confidence;
+                const color = emotionColors[emotion] || '#00ff00';
+                const emoji = emotionEmojis[emotion] || '🙂';
 
                 // Draw bounding box
-                ctx.strokeStyle = '#00ff00';
+                ctx.strokeStyle = color;
                 ctx.lineWidth = 3;
                 ctx.strokeRect(x, y, w, h);
 
                 // Draw label background
-                const label = emotion + ' (' + confidence.toFixed(1) + '%)';
+                const label = emoji + ' ' + emotion + ' (' + confidence.toFixed(1) + '%)';
                 ctx.font = 'bold 16px Inter, sans-serif';
                 const textWidth = ctx.measureText(label).width;
                 const textHeight = 20;
-                ctx.fillStyle = '#00ff00';
-                ctx.fillRect(x, y - textHeight - 8, textWidth + 12, textHeight + 8);
+                const labelY = Math.max(0, y - textHeight - 8);
+                ctx.fillStyle = color;
+                ctx.fillRect(x, labelY, textWidth + 12, textHeight + 8);
 
                 // Draw label text
-                ctx.fillStyle = '#000000';
-                ctx.fillText(label, x + 6, y - 8);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(label, x + 6, labelY + 20);
+            });
+        }
+
+        function resetControls() {
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
+            document.getElementById('statusText').textContent = 'Inactive';
+            document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
+        }
+
+        async function waitForVideoReady(video) {
+            if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                return;
+            }
+
+            await new Promise(function(resolve, reject) {
+                const timeoutId = setTimeout(function() {
+                    cleanup();
+                    reject(new Error('Camera stream took too long to initialize.'));
+                }, 5000);
+
+                function cleanup() {
+                    clearTimeout(timeoutId);
+                    video.removeEventListener('loadedmetadata', onReady);
+                    video.removeEventListener('canplay', onReady);
+                    video.removeEventListener('error', onError);
+                }
+
+                function onReady() {
+                    cleanup();
+                    resolve();
+                }
+
+                function onError() {
+                    cleanup();
+                    reject(new Error('Unable to load the camera stream into the video element.'));
+                }
+
+                video.addEventListener('loadedmetadata', onReady);
+                video.addEventListener('canplay', onReady);
+                video.addEventListener('error', onError);
             });
         }
 
         async function startDetection() {
+            if (isActive || isStarting) {
+                return;
+            }
+
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const video = document.getElementById('videoFeed');
+
+            isStarting = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+            statusDot.className = 'w-3 h-3 rounded-full bg-amber-400 pulse-dot shadow-lg shadow-amber-400/50';
+            statusText.textContent = 'Starting...';
+            statusText.className = 'text-sm font-bold text-amber-600';
+
             try {
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(function(track) { track.stop(); });
+                    mediaStream = null;
+                }
+
                 // Request camera access from the browser
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
                 });
 
-                const video = document.getElementById('videoFeed');
                 video.srcObject = mediaStream;
+                await waitForVideoReady(video);
                 await video.play();
 
                 // Create an offscreen canvas for capturing frames
@@ -611,11 +695,11 @@ HTML_TEMPLATE = """
 
                 isActive = true;
                 document.getElementById('noVideoPlaceholder').style.display = 'none';
-                document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot shadow-lg shadow-green-500/50';
-                document.getElementById('statusText').textContent = 'Active';
-                document.getElementById('statusText').className = 'text-sm font-bold text-green-600';
-                document.getElementById('startBtn').disabled = true;
-                document.getElementById('stopBtn').disabled = false;
+                statusDot.className = 'w-3 h-3 rounded-full bg-green-500 pulse-dot shadow-lg shadow-green-500/50';
+                statusText.textContent = 'Active';
+                statusText.className = 'text-sm font-bold text-green-600';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
 
                 // Start sending frames to the server at ~4 fps
                 let sending = false;
@@ -633,6 +717,14 @@ HTML_TEMPLATE = """
                 showNotification('Detection started successfully!', 'success');
             } catch (error) {
                 console.error('Error starting detection:', error);
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(function(track) { track.stop(); });
+                    mediaStream = null;
+                }
+                video.srcObject = null;
+                document.getElementById('noVideoPlaceholder').style.display = 'flex';
+                drawOverlay([]);
+                resetControls();
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
                     showNotification('Camera access denied. Please allow camera permissions and try again.', 'error');
                 } else if (error.name === 'NotFoundError') {
@@ -640,6 +732,8 @@ HTML_TEMPLATE = """
                 } else {
                     showNotification('Failed to start detection: ' + error.message, 'error');
                 }
+            } finally {
+                isStarting = false;
             }
         }
 
@@ -684,16 +778,10 @@ HTML_TEMPLATE = """
             video.srcObject = null;
 
             // Clear overlay
-            const canvas = document.getElementById('overlayCanvas');
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawOverlay([]);
 
             document.getElementById('noVideoPlaceholder').style.display = 'flex';
-            document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
-            document.getElementById('statusText').textContent = 'Inactive';
-            document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
+            resetControls();
 
             showNotification('Detection stopped', 'info');
         }
