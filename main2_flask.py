@@ -968,7 +968,8 @@ if __name__ == "__main__":
         print("   Make sure the model path is correct")
     
     try:
-        app.run(host="0.0.0.0", port=8501, debug=False, threaded=True)
+        port = int(os.environ.get("PORT", 8501))
+        app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
     finally:
         # Cleanup
         if state.camera is not None:
