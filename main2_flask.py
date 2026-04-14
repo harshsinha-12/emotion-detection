@@ -1,4 +1,9 @@
 import os
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -7,7 +12,7 @@ from collections import deque
 from datetime import datetime
 import base64
 import time
-from threading import Lock
+from threading import Lock, Thread
 
 # Configuration
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.keras")
@@ -47,15 +52,22 @@ class AppState:
         self.stats = {emotion: 0 for emotion in CLASS_LABELS}
         self.init_error = None
         self.last_error = None
+        self.initializing = False
 
 state = AppState()
 resource_lock = Lock()
+
+try:
+    tf.config.threading.set_intra_op_parallelism_threads(int(os.environ["TF_NUM_INTRAOP_THREADS"]))
+    tf.config.threading.set_inter_op_parallelism_threads(int(os.environ["TF_NUM_INTEROP_THREADS"]))
+except Exception:
+    pass
 
 
 def load_model(path: str):
     """Load the emotion detection model"""
     try:
-        model = tf.keras.models.load_model(path)
+        model = tf.keras.models.load_model(path, compile=False)
         print(f"\u2713 Model loaded successfully from {path}")
         return model
     except Exception as e:
@@ -71,16 +83,29 @@ def preprocess_bgr_roi(bgr_roi: np.ndarray) -> np.ndarray:
     return np.expand_dims(rgb, 0)
 
 
+def resources_ready() -> bool:
+    return state.model is not None and state.face_cascade is not None
+
+
 def initialize_resources():
     """Initialize model and face cascade"""
     with resource_lock:
-        if state.model is None:
-            state.model = load_model(MODEL_PATH)
-            if state.model is None:
-                state.init_error = f"Failed to load model from {MODEL_PATH}"
-                return False
+        if resources_ready():
+            state.init_error = None
+            state.initializing = False
+            return True
+        state.initializing = True
+        state.init_error = None
 
-        if state.face_cascade is None:
+    try:
+        model = state.model
+        if model is None:
+            model = load_model(MODEL_PATH)
+            if model is None:
+                raise RuntimeError(f"Failed to load model from {MODEL_PATH}")
+
+        face_cascade = state.face_cascade
+        if face_cascade is None:
             try:
                 from cv2 import data as cv2_data
                 haar_dir = cv2_data.haarcascades
@@ -91,13 +116,35 @@ def initialize_resources():
             cascade_path = os.path.join(haar_dir, "haarcascade_frontalface_default.xml")
             face_cascade = cv2.CascadeClassifier(cascade_path)
             if face_cascade.empty():
-                state.init_error = f"Failed to load face cascade from {cascade_path}"
-                return False
-            state.face_cascade = face_cascade
+                raise RuntimeError(f"Failed to load face cascade from {cascade_path}")
             print(f"\u2713 Face cascade loaded")
 
+        with resource_lock:
+            state.model = model
+            state.face_cascade = face_cascade
+            state.init_error = None
+            state.last_error = None
+            return True
+    except Exception as e:
+        with resource_lock:
+            state.init_error = str(e)
+            state.last_error = str(e)
+        print(f"\u2717 Resource initialization failed: {e}")
+        return False
+    finally:
+        with resource_lock:
+            state.initializing = False
+
+
+def start_background_initialization():
+    """Start loading model resources without blocking the request thread"""
+    with resource_lock:
+        if resources_ready() or state.initializing:
+            return
+        state.initializing = True
         state.init_error = None
-        return True
+
+    Thread(target=initialize_resources, daemon=True).start()
 
 
 HTML_TEMPLATE = """
@@ -702,11 +749,27 @@ HTML_TEMPLATE = """
         }
 
         async function warmupDetector() {
-            const response = await fetch('/warmup', { method: 'POST' });
-            const data = await readApiResponse(response, 'Warmup failed.');
-            if (!response.ok || !data.ready) {
+            const timeoutMs = 120000;
+            const pollMs = 1500;
+            const startedAt = Date.now();
+
+            while ((Date.now() - startedAt) < timeoutMs) {
+                const response = await fetch('/warmup', { method: 'POST' });
+                const data = await readApiResponse(response, 'Warmup failed.');
+
+                if (response.ok && data.ready) {
+                    return;
+                }
+
+                if (response.status === 202 && data.status === 'loading') {
+                    await new Promise(function(resolve) { setTimeout(resolve, pollMs); });
+                    continue;
+                }
+
                 throw new Error(data.error || 'Detector warmup failed.');
             }
+
+            throw new Error('Detector warmup timed out while the server was loading the model.');
         }
 
         async function startDetection() {
@@ -996,24 +1059,45 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
+@app.route("/health")
+def health():
+    """Lightweight detector health for deployment debugging"""
+    return jsonify({
+        "ready": resources_ready(),
+        "initializing": state.initializing,
+        "init_error": state.init_error,
+        "last_error": state.last_error,
+        "model_path": MODEL_PATH,
+        "model_exists": os.path.exists(MODEL_PATH)
+    })
+
+
 @app.route("/warmup", methods=["POST"])
 def warmup():
     """Initialize model and face detector before predictions start"""
-    if initialize_resources():
+    if resources_ready():
         return jsonify({"ready": True})
-    error = state.init_error or "Failed to initialize resources"
-    state.last_error = error
-    return jsonify({"ready": False, "error": error}), 500
+
+    start_background_initialization()
+
+    if state.init_error:
+        error = state.init_error
+        state.last_error = error
+        return jsonify({"ready": False, "status": "error", "error": error}), 500
+
+    return jsonify({"ready": False, "status": "loading"}), 202
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
     """Receive a base64 frame from the browser, run face detection + emotion prediction"""
     try:
-        if not initialize_resources():
-            error = state.init_error or "Failed to initialize resources"
+        if not resources_ready():
+            start_background_initialization()
+            error = state.init_error or "Detector is still loading. Please wait a few seconds and try again."
             state.last_error = error
-            return jsonify({"error": error}), 500
+            status_code = 500 if state.init_error else 503
+            return jsonify({"error": error, "status": "loading" if status_code == 503 else "error"}), status_code
 
         data = request.get_json()
         if not data or "image" not in data:
