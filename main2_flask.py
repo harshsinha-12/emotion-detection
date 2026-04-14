@@ -673,9 +673,37 @@ HTML_TEMPLATE = """
             });
         }
 
+        async function readApiResponse(response, defaultMessage) {
+            const rawText = await response.text();
+            let data = null;
+
+            if (rawText) {
+                try {
+                    data = JSON.parse(rawText);
+                } catch (error) {
+                    data = null;
+                }
+            }
+
+            if (data) {
+                return data;
+            }
+
+            const cleanedText = rawText
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\\s+/g, ' ')
+                .trim();
+
+            return {
+                error: cleanedText
+                    ? (defaultMessage + ' HTTP ' + response.status + ': ' + cleanedText.slice(0, 180))
+                    : (defaultMessage + ' HTTP ' + response.status)
+            };
+        }
+
         async function warmupDetector() {
             const response = await fetch('/warmup', { method: 'POST' });
-            const data = await response.json();
+            const data = await readApiResponse(response, 'Warmup failed.');
             if (!response.ok || !data.ready) {
                 throw new Error(data.error || 'Detector warmup failed.');
             }
@@ -788,7 +816,7 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({ image: dataUrl })
             });
 
-            const data = await response.json();
+            const data = await readApiResponse(response, 'Prediction failed.');
 
             if (!response.ok) {
                 const message = data.error || ('Prediction request failed (' + response.status + ')');
