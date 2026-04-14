@@ -7,6 +7,7 @@ from collections import deque
 from datetime import datetime
 import base64
 import time
+from threading import Lock
 
 # Configuration
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.keras")
@@ -44,8 +45,11 @@ class AppState:
         self.last_frame_time = time.time()
         self.detection_count = 0
         self.stats = {emotion: 0 for emotion in CLASS_LABELS}
+        self.init_error = None
+        self.last_error = None
 
 state = AppState()
+resource_lock = Lock()
 
 
 def load_model(path: str):
@@ -69,24 +73,31 @@ def preprocess_bgr_roi(bgr_roi: np.ndarray) -> np.ndarray:
 
 def initialize_resources():
     """Initialize model and face cascade"""
-    if state.model is None:
-        state.model = load_model(MODEL_PATH)
+    with resource_lock:
         if state.model is None:
-            return False
+            state.model = load_model(MODEL_PATH)
+            if state.model is None:
+                state.init_error = f"Failed to load model from {MODEL_PATH}"
+                return False
 
-    if state.face_cascade is None:
-        try:
-            from cv2 import data as cv2_data
-            haar_dir = cv2_data.haarcascades
-        except Exception:
-            base_dir = os.path.dirname(cv2.__file__)
-            haar_dir = os.path.join(base_dir, "data", "haarcascades")
+        if state.face_cascade is None:
+            try:
+                from cv2 import data as cv2_data
+                haar_dir = cv2_data.haarcascades
+            except Exception:
+                base_dir = os.path.dirname(cv2.__file__)
+                haar_dir = os.path.join(base_dir, "data", "haarcascades")
 
-        cascade_path = os.path.join(haar_dir, "haarcascade_frontalface_default.xml")
-        state.face_cascade = cv2.CascadeClassifier(cascade_path)
-        print(f"\u2713 Face cascade loaded")
+            cascade_path = os.path.join(haar_dir, "haarcascade_frontalface_default.xml")
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            if face_cascade.empty():
+                state.init_error = f"Failed to load face cascade from {cascade_path}"
+                return False
+            state.face_cascade = face_cascade
+            print(f"\u2713 Face cascade loaded")
 
-    return True
+        state.init_error = None
+        return True
 
 
 HTML_TEMPLATE = """
@@ -480,6 +491,9 @@ HTML_TEMPLATE = """
         let predictionInterval = null;
         let captureCanvas = null;
         let captureCtx = null;
+        let lastPredictionError = null;
+        const maxUploadWidth = 480;
+        const jpegQuality = 0.72;
 
         const emotionColors = {
             'Anger': '#ef4444',
@@ -567,12 +581,14 @@ HTML_TEMPLATE = """
             });
         }
 
-        function drawOverlay(faces) {
+        function drawOverlay(faces, sourceWidth, sourceHeight) {
             const video = document.getElementById('videoFeed');
             const canvas = document.getElementById('overlayCanvas');
             const ctx = canvas.getContext('2d');
             const nextWidth = video.videoWidth || canvas.width;
             const nextHeight = video.videoHeight || canvas.height;
+            const xScale = sourceWidth ? nextWidth / sourceWidth : 1;
+            const yScale = sourceHeight ? nextHeight / sourceHeight : 1;
 
             // Match canvas internal resolution to video's natural resolution
             canvas.width = nextWidth;
@@ -585,10 +601,10 @@ HTML_TEMPLATE = """
             }
 
             faces.forEach(function(face) {
-                const x = face.x;
-                const y = face.y;
-                const w = face.w;
-                const h = face.h;
+                const x = face.x * xScale;
+                const y = face.y * yScale;
+                const w = face.w * xScale;
+                const h = face.h * yScale;
                 const emotion = face.emotion;
                 const confidence = face.confidence;
                 const color = emotionColors[emotion] || '#00ff00';
@@ -620,6 +636,7 @@ HTML_TEMPLATE = """
             document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-gray-400 shadow-lg';
             document.getElementById('statusText').textContent = 'Inactive';
             document.getElementById('statusText').className = 'text-sm font-semibold text-gray-700';
+            lastPredictionError = null;
         }
 
         async function waitForVideoReady(video) {
@@ -656,6 +673,14 @@ HTML_TEMPLATE = """
             });
         }
 
+        async function warmupDetector() {
+            const response = await fetch('/warmup', { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok || !data.ready) {
+                throw new Error(data.error || 'Detector warmup failed.');
+            }
+        }
+
         async function startDetection() {
             if (isActive || isStarting) {
                 return;
@@ -688,6 +713,10 @@ HTML_TEMPLATE = """
                 video.srcObject = mediaStream;
                 await waitForVideoReady(video);
                 await video.play();
+                statusDot.className = 'w-3 h-3 rounded-full bg-sky-400 pulse-dot shadow-lg shadow-sky-400/50';
+                statusText.textContent = 'Loading model...';
+                statusText.className = 'text-sm font-bold text-sky-600';
+                await warmupDetector();
 
                 // Create an offscreen canvas for capturing frames
                 captureCanvas = document.createElement('canvas');
@@ -741,11 +770,17 @@ HTML_TEMPLATE = """
             const video = document.getElementById('videoFeed');
             if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
-            captureCanvas.width = video.videoWidth;
-            captureCanvas.height = video.videoHeight;
-            captureCtx.drawImage(video, 0, 0);
+            const scale = video.videoWidth > maxUploadWidth
+                ? maxUploadWidth / video.videoWidth
+                : 1;
+            const frameWidth = Math.max(1, Math.round(video.videoWidth * scale));
+            const frameHeight = Math.max(1, Math.round(video.videoHeight * scale));
 
-            const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.8);
+            captureCanvas.width = frameWidth;
+            captureCanvas.height = frameHeight;
+            captureCtx.drawImage(video, 0, 0, frameWidth, frameHeight);
+
+            const dataUrl = captureCanvas.toDataURL('image/jpeg', jpegQuality);
 
             const response = await fetch('/predict', {
                 method: 'POST',
@@ -753,10 +788,19 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({ image: dataUrl })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                drawOverlay(data.faces || []);
+            const data = await response.json();
+
+            if (!response.ok) {
+                const message = data.error || ('Prediction request failed (' + response.status + ')');
+                if (message !== lastPredictionError) {
+                    lastPredictionError = message;
+                    showNotification('Detection backend error: ' + message, 'error');
+                }
+                throw new Error(message);
             }
+
+            lastPredictionError = null;
+            drawOverlay(data.faces || [], data.source_width, data.source_height);
         }
 
         function stopDetection() {
@@ -924,15 +968,28 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
+@app.route("/warmup", methods=["POST"])
+def warmup():
+    """Initialize model and face detector before predictions start"""
+    if initialize_resources():
+        return jsonify({"ready": True})
+    error = state.init_error or "Failed to initialize resources"
+    state.last_error = error
+    return jsonify({"ready": False, "error": error}), 500
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
     """Receive a base64 frame from the browser, run face detection + emotion prediction"""
     try:
         if not initialize_resources():
-            return jsonify({"error": "Failed to initialize resources"}), 500
+            error = state.init_error or "Failed to initialize resources"
+            state.last_error = error
+            return jsonify({"error": error}), 500
 
         data = request.get_json()
         if not data or "image" not in data:
+            state.last_error = "No image provided"
             return jsonify({"error": "No image provided"}), 400
 
         # Decode the base64 image
@@ -946,6 +1003,7 @@ def predict():
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
         if frame is None:
+            state.last_error = "Failed to decode image"
             return jsonify({"error": "Failed to decode image"}), 400
 
         # Calculate FPS
@@ -992,12 +1050,16 @@ def predict():
                 "confidence": confidence
             })
 
+        state.last_error = None
         return jsonify({
             "faces": results,
-            "face_count": len(results)
+            "face_count": len(results),
+            "source_width": int(frame.shape[1]),
+            "source_height": int(frame.shape[0])
         })
 
     except Exception as e:
+        state.last_error = str(e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -1008,6 +1070,7 @@ def reset():
         state.emotion_history.clear()
         state.stats = {emotion: 0 for emotion in CLASS_LABELS}
         state.detection_count = 0
+        state.last_error = None
         return jsonify({"status": "reset"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1022,7 +1085,8 @@ def stats():
         "total_detections": state.detection_count,
         "emotion_counts": state.stats,
         "fps": sum(state.fps_history) / len(state.fps_history) if state.fps_history else 0,
-        "recent_detections": recent_detections
+        "recent_detections": recent_detections,
+        "last_error": state.last_error
     })
 
 
