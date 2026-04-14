@@ -6,7 +6,6 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import cv2
 import numpy as np
-import tensorflow as tf
 from flask import Flask, render_template_string, jsonify, request
 from collections import deque
 from datetime import datetime
@@ -16,6 +15,7 @@ from threading import Lock, Thread
 
 # Configuration
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.keras")
+TFLITE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.tflite")
 IMG_HEIGHT = 48
 IMG_WIDTH = 48
 CLASS_LABELS = ['Anger', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sadness', 'Surprise']
@@ -44,6 +44,10 @@ app = Flask(__name__)
 class AppState:
     def __init__(self):
         self.model = None
+        self.interpreter = None
+        self.input_details = None
+        self.output_details = None
+        self.backend = None
         self.face_cascade = None
         self.emotion_history = deque(maxlen=100)
         self.fps_history = deque(maxlen=30)
@@ -56,35 +60,97 @@ class AppState:
 
 state = AppState()
 resource_lock = Lock()
-
-try:
-    tf.config.threading.set_intra_op_parallelism_threads(int(os.environ["TF_NUM_INTRAOP_THREADS"]))
-    tf.config.threading.set_inter_op_parallelism_threads(int(os.environ["TF_NUM_INTEROP_THREADS"]))
-except Exception:
-    pass
+inference_lock = Lock()
+_tensorflow = None
 
 
-def load_model(path: str):
-    """Load the emotion detection model"""
+def get_tensorflow():
+    """Lazily import TensorFlow only when the Keras fallback is needed."""
+    global _tensorflow
+    if _tensorflow is None:
+        import tensorflow as tf
+
+        try:
+            tf.config.threading.set_intra_op_parallelism_threads(int(os.environ["TF_NUM_INTRAOP_THREADS"]))
+            tf.config.threading.set_inter_op_parallelism_threads(int(os.environ["TF_NUM_INTEROP_THREADS"]))
+        except Exception:
+            pass
+
+        _tensorflow = tf
+
+    return _tensorflow
+
+
+def load_keras_model(path: str):
+    """Load the Keras model as a fallback backend."""
     try:
+        tf = get_tensorflow()
         model = tf.keras.models.load_model(path, compile=False)
-        print(f"\u2713 Model loaded successfully from {path}")
+        print(f"\u2713 Keras model loaded successfully from {path}")
         return model
     except Exception as e:
-        print(f"\u2717 Error loading model: {e}")
+        print(f"\u2717 Error loading Keras model: {e}")
         return None
+
+
+def load_tflite_interpreter(path: str):
+    """Load a lightweight TFLite interpreter when the artifact exists."""
+    try:
+        try:
+            from tflite_runtime.interpreter import Interpreter
+            backend_name = "tflite-runtime"
+        except ImportError:
+            tf = get_tensorflow()
+            Interpreter = tf.lite.Interpreter
+            backend_name = "tensorflow-lite"
+
+        interpreter = Interpreter(model_path=path)
+        interpreter.allocate_tensors()
+        print(f"\u2713 TFLite model loaded successfully from {path} via {backend_name}")
+        return interpreter, interpreter.get_input_details(), interpreter.get_output_details(), backend_name
+    except Exception as e:
+        print(f"\u2717 Error loading TFLite model: {e}")
+        return None, None, None, None
 
 
 def preprocess_bgr_roi(bgr_roi: np.ndarray) -> np.ndarray:
     """Preprocess face ROI for model input"""
     rgb = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2RGB)
     rgb = cv2.resize(rgb, (IMG_WIDTH, IMG_HEIGHT)).astype("float32")
-    rgb = tf.keras.applications.densenet.preprocess_input(rgb)
-    return np.expand_dims(rgb, 0)
+    rgb /= 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    rgb = (rgb - mean) / std
+    return np.expand_dims(rgb, 0).astype(np.float32)
 
 
 def resources_ready() -> bool:
-    return state.model is not None and state.face_cascade is not None
+    return (state.model is not None or state.interpreter is not None) and state.face_cascade is not None
+
+
+def predict_emotion_probabilities(x_input: np.ndarray) -> np.ndarray:
+    """Run inference against whichever backend is initialized."""
+    with inference_lock:
+        if state.interpreter is not None:
+            input_detail = state.input_details[0]
+            output_detail = state.output_details[0]
+            input_data = x_input.astype(input_detail["dtype"], copy=False)
+
+            scale, zero_point = input_detail.get("quantization", (0.0, 0))
+            if scale:
+                input_data = np.round((x_input / scale) + zero_point).astype(input_detail["dtype"])
+
+            state.interpreter.set_tensor(input_detail["index"], input_data)
+            state.interpreter.invoke()
+            output = state.interpreter.get_tensor(output_detail["index"])[0]
+
+            out_scale, out_zero_point = output_detail.get("quantization", (0.0, 0))
+            if out_scale:
+                output = (output.astype(np.float32) - out_zero_point) * out_scale
+
+            return output.astype(np.float32)
+
+        return state.model.predict(x_input, verbose=0)[0]
 
 
 def initialize_resources():
@@ -99,10 +165,21 @@ def initialize_resources():
 
     try:
         model = state.model
-        if model is None:
-            model = load_model(MODEL_PATH)
-            if model is None:
-                raise RuntimeError(f"Failed to load model from {MODEL_PATH}")
+        interpreter = state.interpreter
+        input_details = state.input_details
+        output_details = state.output_details
+        backend = state.backend
+
+        if model is None and interpreter is None:
+            if os.path.exists(TFLITE_MODEL_PATH):
+                interpreter, input_details, output_details, backend = load_tflite_interpreter(TFLITE_MODEL_PATH)
+                if interpreter is None:
+                    raise RuntimeError(f"Failed to load TFLite model from {TFLITE_MODEL_PATH}")
+            else:
+                model = load_keras_model(MODEL_PATH)
+                backend = "keras"
+                if model is None:
+                    raise RuntimeError(f"Failed to load model from {MODEL_PATH}")
 
         face_cascade = state.face_cascade
         if face_cascade is None:
@@ -121,6 +198,10 @@ def initialize_resources():
 
         with resource_lock:
             state.model = model
+            state.interpreter = interpreter
+            state.input_details = input_details
+            state.output_details = output_details
+            state.backend = backend
             state.face_cascade = face_cascade
             state.init_error = None
             state.last_error = None
@@ -1067,8 +1148,11 @@ def health():
         "initializing": state.initializing,
         "init_error": state.init_error,
         "last_error": state.last_error,
+        "backend": state.backend,
         "model_path": MODEL_PATH,
-        "model_exists": os.path.exists(MODEL_PATH)
+        "model_exists": os.path.exists(MODEL_PATH),
+        "tflite_model_path": TFLITE_MODEL_PATH,
+        "tflite_model_exists": os.path.exists(TFLITE_MODEL_PATH)
     })
 
 
@@ -1139,7 +1223,7 @@ def predict():
             roi = frame[y:y + h, x:x + w]
             x_input = preprocess_bgr_roi(roi)
 
-            probs = state.model.predict(x_input, verbose=0)[0]
+            probs = predict_emotion_probabilities(x_input)
             idx = int(np.argmax(probs))
             emotion = CLASS_LABELS[idx]
             confidence = float(probs[idx] * 100)
