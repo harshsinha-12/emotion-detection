@@ -1,9 +1,10 @@
+import os
 import streamlit as st
 import numpy as np
 import tensorflow as tf
 from PIL import Image
 
-MODEL_PATH = "/Users/harshsinha/VS Code/Emotion Detection/models/emotion_densenet169.keras"
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "emotion_densenet.keras")
 IMG_HEIGHT = 48
 IMG_WIDTH = 48
 CLASS_LABELS = ['Anger', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sadness', 'Surprise']
