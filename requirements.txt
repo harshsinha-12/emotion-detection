@@ -1,8 +1,5 @@
-av
 numpy
 opencv-python-headless
 Flask
-streamlit
-streamlit-webrtc
 tensorflow
 gunicorn
