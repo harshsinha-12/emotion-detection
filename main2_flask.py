@@ -234,7 +234,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Emotion Detection System</title>
+    <title>Emotion Detection System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -449,7 +449,7 @@ HTML_TEMPLATE = """
             <div class="inline-block mb-4">
                 <h1 class="text-6xl font-extrabold text-white mb-3 tracking-tight">
                     <span class="inline-block animate-pulse">&#127917;</span>
-                    AI Emotion Detection
+                    Emotion Detection
                 </h1>
                 <div class="h-1 bg-gradient-to-r from-transparent via-white to-transparent opacity-50 rounded-full"></div>
             </div>
